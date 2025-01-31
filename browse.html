@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure PDF Folder Browser</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        #folder-list {
+            margin-top: 20px;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            margin: 5px 0;
+        }
+        a {
+            text-decoration: none;
+            color: #007BFF;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>Azure PDF Folder Browser</h1>
+    <div id="folder-list">Loading...</div>
+
+    <script>
+        const initialFolder = "News Picks Archive/";
+
+        async function listBlobs(path = initialFolder) {
+            // Configuration variables
+            const queryKey = "TdO00PDE1hywozR9orUJ41SfmiP5QOWQO8EtmS3cvOAzSeCn9Wyz"; // Replace with your query key
+            const serviceName = "npsearch"; // Replace with your service name
+            const indexName = "nparchive-index"; // Replace with your index name
+            //const sasToken = "sp=rl&st=2024-11-26T16:09:05Z&se=2024-11-27T00:09:05Z&spr=https&sv=2022-11-02&sr=c&sig=Jy6%2BYsJkCnomTvSsWPWPRaTIQ0U5hYjImDNXPGVtWbQ%3D"; // Replace with your SAS token for blob storage
+            const accountName = "nparchive"; // Define your account name
+            const containerName = "nparchive1"; // Define your container name
+
+            const url = `https://${accountName}.blob.core.windows.net/${containerName}?restype=container&comp=list&prefix=${path}&${sasToken}`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("Failed to fetch blob list");
+
+                const text = await response.text();
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(text, "application/xml");
+
+                const blobs = xmlDoc.getElementsByTagName("Blob");
+                const blobList = [];
+
+                for (let i = 0; i < blobs.length; i++) {
+                    const blob = blobs[i];
+                    const blobName = blob.getElementsByTagName("Name")[0].textContent;
+                    blobList.push(blobName);
+                }
+
+                renderFolderList(blobList, path, accountName, containerName);
+            } catch (error) {
+                console.error("Network error:", error);
+                document.getElementById("folder-list").innerText = `Error: ${error.message}`;
+            }
+        }
+
+        function renderFolderList(blobList, currentPath, accountName, containerName) {
+            let html = `<p><a href="#" onclick="listBlobs('${initialFolder}')">${initialFolder}</a>`;
+
+            if (currentPath !== initialFolder) {
+                const pathParts = currentPath.replace(initialFolder, '').split('/').filter(part => part);
+                let accumulatedPath = initialFolder;
+                pathParts.forEach((part, index) => {
+                    accumulatedPath += part + '/';
+                    html += ` / <a href="#" onclick="listBlobs('${accumulatedPath}')">${part}</a>`;
+                });
+            }
+
+            html += `</p>`;
+
+            if (currentPath !== initialFolder) {
+                const parentPath = currentPath.split('/').slice(0, -2).join('/') + '/';
+                html += `<p><a href="#" onclick="listBlobs('${parentPath}')">Back</a></p>`;
+            }
+
+            html += '<ul>';
+
+            const folders = new Set();
+            const files = [];
+
+            // Modified blob processing to prevent duplicates
+            const processedPaths = new Set();
+            
+            blobList.forEach(blob => {
+                if (processedPaths.has(blob)) return;
+                processedPaths.add(blob);
+                
+                const relativePath = blob.replace(currentPath, '');
+                const parts = relativePath.split('/');
+                
+                // Only add the first level of folders
+                if (parts.length > 1) {
+                    const folderName = parts[0];
+                    if (folderName) folders.add(folderName);
+                } else if (parts.length === 1 && parts[0]) {
+                    files.push(blob);
+                }
+            });
+
+            folders.forEach(folder => {
+                html += `<li><a href="#" onclick="listBlobs('${currentPath + folder}/')">${folder}</a></li>`;
+            });
+
+            files.forEach(file => {
+                html += `<li><a href="https://${accountName}.blob.core.windows.net/${containerName}/${file}" target="_blank">${file.replace(currentPath, '')}</a></li>`;
+            });
+
+            html += '</ul>';
+            document.getElementById("folder-list").innerHTML = html;
+        }
+
+        // Initial load
+        listBlobs();
+    </script>
+</body>
+</html>

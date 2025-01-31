@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Search with SAS Token</title>
+    <!-- External Styles -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+    <style>
+        body {
+            margin: 20px;
+        }
+        .result {
+            border-bottom: 1px solid #ddd;
+            padding: 10px 0;
+            margin-bottom: 10px;
+        }
+        .result h4 {
+            font-size: 18px;
+            margin: 0 0 5px;
+            color: #333;
+        }
+        .result p {
+            margin: 0;
+            color: #555;
+        }
+        .result a {
+            color: #0066cc;
+            text-decoration: underline;
+        }
+        #pager {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Azure Search Demo with SAS Token</h1>
+        <form id="searchForm">
+            <label for="query">Search:</label>
+            <input type="text" id="query" name="query" required>
+            <button type="submit">Search</button>
+        </form>
+        <div id="results"></div>
+        <pre id="debug"></pre> <!-- Debug output -->
+    </div>
+
+    <!-- Required Scripts -->
+    <script src="https://cdn.jsdelivr.net/react/15.5.0/react.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/react/15.5.0/react-dom.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/redux@3.6.0/dist/redux.min.js"></script>
+    <script>
+        // Configuration variables
+        const queryKey = "TdO00PDE1hywozR9orUJ41SfmiP5QOWQO8EtmS3cvOAzSeCn9Wyz"; // Replace with your query key
+        const serviceName = "npsearch"; // Replace with your service name
+        const indexName = "nparchive-index"; // Replace with your index name
+        //const sasToken = "sp=rl&st=2024-11-26T16:09:05Z&se=2024-11-27T00:09:05Z&spr=https&sv=2022-11-02&sr=c&sig=Jy6%2BYsJkCnomTvSsWPWPRaTIQ0U5hYjImDNXPGVtWbQ%3D"; // Replace with your SAS token for blob storage
+        const accountName = "nparchive"; // Define your account name
+        const containerName = "nparchive1"; // Define your container name
+
+        function isValidBase64(str) {
+            try {
+                // Clean the Base64 string
+                str = str.replace(/[^A-Za-z0-9+/=]/g, '');
+                // Fix padding
+                while (str.length % 4 !== 0) {
+                    str += '=';
+                }
+                atob(str);
+                return true;
+            } catch (err) {
+                return false;
+            }
+        }
+
+        function cleanBase64String(str) {
+            return str.replace(/[^A-Za-z0-9+/=]/g, '');
+        }
+
+        document.getElementById("searchForm").addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const query = document.getElementById("query").value;
+
+            const debug = document.getElementById("debug");
+            debug.textContent = "Starting search...";
+
+            const searchUrl = `https://${serviceName}.search.windows.net/indexes/${indexName}/docs/search?api-version=2021-04-30-Preview`;
+
+            const payload = {
+                search: query,
+                top: 10,
+                highlight: "content", // Specify the field to highlight
+                highlightPreTag: "<mark>", // Tag to start highlighting
+                highlightPostTag: "</mark>", // Tag to end highlighting
+            };
+
+            try {
+                const response = await fetch(searchUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "api-key": queryKey,
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                debug.textContent = `Request URL: ${searchUrl}\nPayload: ${JSON.stringify(payload, null, 2)}`;
+
+                if (!response.ok) {
+                    throw new Error(`API returned ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                debug.textContent += `\nResponse: ${JSON.stringify(data, null, 2)}`;
+
+                // Format and display results
+                const resultsDiv = document.getElementById("results");
+                resultsDiv.innerHTML = ""; // Clear old results
+                data.value.forEach((result) => {
+                    // Log the entire result object for debugging
+                    debug.textContent += `\nResult Object: ${JSON.stringify(result, null, 2)}`;
+
+                    let base64Str = result.metadata_storage_path;
+
+                    // Clean the Base64 string by removing invalid characters and trailing digits
+                    base64Str = base64Str.replace(/[^A-Za-z0-9+/=]/g, '');
+                    base64Str = base64Str.replace(/[\d]+$/, '');
+                    // Fix padding
+                    base64Str = base64Str.padEnd(Math.ceil(base64Str.length / 4) * 4, '=');
+
+                    let decodedPath;
+                    try {
+                        decodedPath = decodeURIComponent(escape(atob(base64Str)));
+                        debug.textContent += `\nDecoded Path (Base64): ${decodedPath}`;
+                    } catch (e) {
+                        debug.textContent += `\nError decoding path: ${e.message}`;
+                        return; // Skip this result if decoding fails
+                    }
+
+                    // Trim any whitespace or control characters
+                    decodedPath = decodedPath.trim();
+
+                    // Build the file URL by appending the SAS token
+                    const fileUrl = `${decodedPath}?${sasToken}`;
+
+                    debug.textContent += `\nFile URL: ${fileUrl}`;
+                    debug.textContent += `\nFile Name: ${result.metadata_storage_name}`;
+
+                    const highlights = result["@search.highlights"]?.content?.join("...") || "No preview available";
+
+                    const div = document.createElement("div");
+                    div.innerHTML = `
+                        <div class="result">
+                            <h4>${result.metadata_storage_name || "Unnamed File"}</h4>
+                            <p>${highlights}</p>
+                            <a href="${fileUrl}" target="_blank">View Document</a>
+                        </div>
+                    `;
+                    resultsDiv.appendChild(div);
+                });
+            } catch (error) {
+                debug.textContent += `\nError: ${error.message}`;
+            }
+        });
+    </script>
+</body>
+</html>
